@@ -62,6 +62,8 @@ android {
         buildConfigField("String", "DEVICE_ID_CHOICE", "\"user\"")
         // Enables Push notifications. Setting it to false will stop automatic configuration updates after changing it on the server.
         buildConfigField("Boolean", "ENABLE_PUSH", "true")
+        // MQTT over TLS
+        buildConfigField("Boolean", "MQTT_OVER_TLS", "false")
         // MQTT port for Push notifications
         buildConfigField("Integer", "MQTT_PORT", "31000")
         // Set this parameter to true if you'll grant system privileges to Headwind MDM (signing it by system keys).

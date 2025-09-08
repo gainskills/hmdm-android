@@ -58,6 +58,7 @@ import org.json.JSONObject;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLSocketFactory;
 
 public class PushNotificationMqttWrapper {
     private static PushNotificationMqttWrapper instance;
@@ -104,7 +105,7 @@ public class PushNotificationMqttWrapper {
         connectOptions.setCleanSession(false);
         if (pushType.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)) {
             connectOptions.setPingType(MqttAndroidConnectOptions.PING_WORKER);
-            // For worker, keepalive time cannot be less than 15 minutes
+            // For worker, keepalive time cannot be greater than 15 minutes
             connectOptions.setKeepAliveInterval(Const.DEFAULT_PUSH_WORKER_KEEPALIVE_TIME_SEC);
         } else {
             connectOptions.setPingType(MqttAndroidConnectOptions.PING_ALARM);
@@ -112,7 +113,13 @@ public class PushNotificationMqttWrapper {
         }
         connectOptions.setUserName("hmdm");
         connectOptions.setPassword(CryptoHelper.getSHA1String("hmdm" + BuildConfig.REQUEST_SIGNATURE).toCharArray());
-        String serverUri = "tcp://" + host + ":" + port;
+        String scheme = "tcp://";
+        if (BuildConfig.MQTT_OVER_TLS) {
+            scheme = "ssl://";
+            SSLSocketFactory socketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            connectOptions.setSocketFactory(socketFactory);
+        }
+        String serverUri = scheme + host + ":" + port;
 
         if (client != null) {
             // Here we go after reconnection.
