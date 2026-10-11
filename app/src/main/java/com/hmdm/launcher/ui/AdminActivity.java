@@ -45,7 +45,7 @@ import com.hmdm.launcher.pro.ProUtils;
 import com.hmdm.launcher.server.ServerServiceKeeper;
 import com.hmdm.launcher.util.AppInfo;
 import com.hmdm.launcher.util.LegacyUtils;
-import com.hmdm.launcher.util.PushNotificationMqttWrapper;
+import com.hmdm.launcher.service.MqttPushService;
 import com.hmdm.launcher.util.RemoteLogger;
 import com.hmdm.launcher.util.Utils;
 
@@ -169,7 +169,7 @@ public class AdminActivity extends BaseActivity {
             }
             if (pushOptions != null && (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
                     || pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM))) {
-                PushNotificationMqttWrapper.getInstance().disconnect(this);
+                MqttPushService.stop(this);
             }
             updateConfig(view);
         }
@@ -191,6 +191,7 @@ public class AdminActivity extends BaseActivity {
     }
 
     public void updateConfig( View view ) {
+        MqttPushService.resetLoopProtection(); // Explicit administrator action, not an automatic notification.
         LocalBroadcastManager.getInstance( this ).
                 sendBroadcast( new Intent( Const.ACTION_UPDATE_CONFIGURATION ) );
         finish();

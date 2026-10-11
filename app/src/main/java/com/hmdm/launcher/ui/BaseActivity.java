@@ -438,6 +438,7 @@ public class BaseActivity extends AppCompatActivity {
 
 
     public void exitToSystemLauncher( View view ) {
+        com.hmdm.launcher.service.MqttPushService.stopExplicitly(this);
         LocalBroadcastManager.getInstance( this ).sendBroadcast( new Intent( Const.ACTION_SERVICE_STOP ) );
         LocalBroadcastManager.getInstance( this ).sendBroadcast( new Intent( Const.ACTION_EXIT ) );
 

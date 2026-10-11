@@ -133,6 +133,11 @@ public class ServerConfig {
     public static final int SYSTEM_UPDATE_SCHEDULE = 2;
     public static final int SYSTEM_UPDATE_MANUAL = 3;
 
+    private String mqttUrl;
+
+    public String getMqttUrl() { return mqttUrl; }
+    public void setMqttUrl(String mqttUrl) { this.mqttUrl = mqttUrl; }
+
     public static final String PUSH_OPTIONS_MQTT_WORKER = "mqttWorker";
     public static final String PUSH_OPTIONS_MQTT_ALARM = "mqttAlarm";
     public static final String PUSH_OPTIONS_POLLING = "polling";

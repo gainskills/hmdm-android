@@ -40,7 +40,7 @@ import com.hmdm.launcher.task.GetRemoteLogConfigTask;
 import com.hmdm.launcher.task.GetServerConfigTask;
 import com.hmdm.launcher.util.DeviceInfoProvider;
 import com.hmdm.launcher.util.InstallUtils;
-import com.hmdm.launcher.util.PushNotificationMqttWrapper;
+import com.hmdm.launcher.service.MqttPushService;
 import com.hmdm.launcher.util.RemoteLogger;
 import com.hmdm.launcher.util.SystemUtils;
 import com.hmdm.launcher.util.Utils;
@@ -134,6 +134,7 @@ public class ConfigUpdater {
             return;
         }
 
+        if (userInteraction) MqttPushService.resetLoopProtection();
         Log.i(Const.LOG_TAG, "updateConfig(): set configInitializing=true");
         configInitializing = true;
         DetailedInfoWorker.requestConfigUpdate(context);
@@ -258,6 +259,9 @@ public class ConfigUpdater {
                         public void onSuccess() {
                             // Everything is OK, migrate!
                             RemoteLogger.log(context, Const.LOG_INFO, "Migrated to " + settingsHelper.getConfig().getNewServerUrl().trim());
+                            MqttPushService.stop(context);
+                            context.stopService(new Intent(context, PushLongPollingService.class));
+                            settingsHelper.updateConfig(migrationHelper.getDestinationConfig());
                             settingsHelper.setBaseUrl(migrationHelper.getBaseUrl());
                             settingsHelper.setSecondaryBaseUrl(migrationHelper.getBaseUrl());
                             settingsHelper.setServerProject(migrationHelper.getServerProject());
@@ -283,47 +287,13 @@ public class ConfigUpdater {
     }
 
     private void setupPushService() {
-        Log.d(Const.LOG_TAG, "setupPushService() called");
-        String pushOptions = null;
-        int keepaliveTime = Const.DEFAULT_PUSH_ALARM_KEEPALIVE_TIME_SEC;
-        if (settingsHelper != null && settingsHelper.getConfig() != null) {
-            pushOptions = settingsHelper.getConfig().getPushOptions();
-            Integer newKeepaliveTime = settingsHelper.getConfig().getKeepaliveTime();
-            if (newKeepaliveTime != null && newKeepaliveTime >= 30) {
-                keepaliveTime = newKeepaliveTime;
-            }
+        MqttPushService.update(context);
+        ServerConfig config = settingsHelper != null ? settingsHelper.getConfig() : null;
+        if (!MqttPushService.isExplicitlyStopped(context) && config != null && ServerConfig.PUSH_OPTIONS_POLLING.equals(config.getPushOptions())) {
+            try { context.startForegroundService(new Intent(context, PushLongPollingService.class)); }
+            catch (RuntimeException e) { Log.w(Const.LOG_TAG, "HTTP push service start deferred", e); }
         }
-        if (pushOptions != null) {
-            if (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
-                    || pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM)) {
-                try {
-                    URL url = new URL(settingsHelper.getBaseUrl());
-                    Runnable nextRunnable = () -> {
-                        checkFactoryReset();
-                    };
-                    PushNotificationMqttWrapper.getInstance().connect(context, url.getHost(), BuildConfig.MQTT_PORT,
-                            pushOptions, keepaliveTime, settingsHelper.getDeviceId(), nextRunnable, nextRunnable);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    checkFactoryReset();
-                }
-            } else {
-                try {
-                    Intent serviceStartIntent = new Intent(context, PushLongPollingService.class);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(serviceStartIntent);
-                    } else {
-                        context.startService(serviceStartIntent);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-
-                checkFactoryReset();
-            }
-        } else {
-            checkFactoryReset();
-        }
+        checkFactoryReset();
     }
 
     private void checkFactoryReset() {

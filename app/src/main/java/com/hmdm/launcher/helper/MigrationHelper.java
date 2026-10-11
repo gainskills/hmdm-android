@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.os.Build;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hmdm.launcher.BuildConfig;
 import com.hmdm.launcher.Const;
 import com.hmdm.launcher.json.ServerConfigResponse;
@@ -13,6 +14,7 @@ import com.hmdm.launcher.server.ServerUrl;
 
 import java.net.MalformedURLException;
 
+import okhttp3.ResponseBody;
 import retrofit2.Response;
 
 public class MigrationHelper {
@@ -41,8 +43,13 @@ public class MigrationHelper {
                !serverUrl.serverProject.equalsIgnoreCase(SettingsHelper.getInstance(context).getServerProject());
     }
 
+    private com.hmdm.launcher.json.ServerConfig destinationConfig;
+
+    public com.hmdm.launcher.json.ServerConfig getDestinationConfig() { return destinationConfig; }
+
     // Before migration, test that URL is working well
     public void tryNewServer(final Context context, final CompletionHandler completionHandler) {
+        destinationConfig = null;
         new AsyncTask<Void, Void, String>() {
             @Override
             protected String doInBackground(Void... voids) {
@@ -53,7 +60,6 @@ public class MigrationHelper {
                     return e.getMessage();
                 }
 
-                Response<ServerConfigResponse> response = null;
                 SettingsHelper settingsHelper = SettingsHelper.getInstance(context);
 
                 String deviceId = settingsHelper.getDeviceId();
@@ -64,27 +70,37 @@ public class MigrationHelper {
                 }
 
                 try {
-                    response = newServer.getServerConfig(serverUrl.serverProject, deviceId, signature, Build.CPU_ABI).execute();
+                    ServerConfigResponse body;
+                    if (BuildConfig.CHECK_SIGNATURE) {
+                        Response<ResponseBody> response = newServer.getServerConfigRaw(serverUrl.serverProject,
+                                deviceId, signature, Build.CPU_ABI).execute();
+                        if (!response.isSuccessful()) return "Bad server response: " + response.message();
+                        if (response.body() == null) return "Failed to parse server response";
+                        String raw;
+                        try (ResponseBody responseBody = response.body()) {
+                            raw = responseBody.string();
+                        }
+                        ObjectMapper mapper = new ObjectMapper();
+                        body = mapper.readValue(raw, ServerConfigResponse.class);
+                        // Application errors are unsigned, matching the normal configuration fetch.
+                        if (!Const.STATUS_OK.equals(body.getStatus())) return "Bad server status: " + body.getStatus();
+                        String verifiedData = CryptoHelper.getVerifiedServerData(raw,
+                                response.headers().get(Const.HEADER_RESPONSE_SIGNATURE), BuildConfig.REQUEST_SIGNATURE);
+                        destinationConfig = mapper.readValue(verifiedData, com.hmdm.launcher.json.ServerConfig.class);
+                    } else {
+                        Response<ServerConfigResponse> response = newServer.getServerConfig(serverUrl.serverProject,
+                                deviceId, signature, Build.CPU_ABI).execute();
+                        if (!response.isSuccessful()) return "Bad server response: " + response.message();
+                        body = response.body();
+                        if (body == null) return "Failed to parse server response";
+                        if (!Const.STATUS_OK.equals(body.getStatus())) return "Bad server status: " + body.getStatus();
+                        destinationConfig = body.getData();
+                    }
+                    if (destinationConfig == null) return "Failed to parse server response";
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    destinationConfig = null;
+                    return e.getMessage() == null ? "Network error" : e.getMessage();
                 }
-
-                if (response == null) {
-                    return "Network error";
-                }
-
-                if (!response.isSuccessful()) {
-                    return "Bad server response: " + response.message();
-                }
-
-                if (!Const.STATUS_OK.equals(response.body().getStatus())) {
-                    return "Bad server status: " + response.body().getStatus();
-                }
-
-                if (response.body().getData() == null) {
-                    return "Failed to parse server response";
-                }
-
                 // We get something JSON-like, let's conclude the request has been successful!
                 return null;
             }

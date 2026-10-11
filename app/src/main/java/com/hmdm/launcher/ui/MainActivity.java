@@ -569,6 +569,7 @@ public class MainActivity
         super.onResume();
 
         isBackground = false;
+        com.hmdm.launcher.service.MqttPushService.resume(this);
 
         // On some Android firmwares, onResume is called before onCreate, so the fields are not initialized
         // Here we initialize all required fields to avoid crash at startup

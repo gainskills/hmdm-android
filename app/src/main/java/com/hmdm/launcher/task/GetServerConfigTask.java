@@ -37,7 +37,7 @@ import com.hmdm.launcher.pro.ProUtils;
 import com.hmdm.launcher.server.ServerService;
 import com.hmdm.launcher.server.ServerServiceKeeper;
 import com.hmdm.launcher.util.AppRestrictionUpdater;
-import com.hmdm.launcher.util.PushNotificationMqttWrapper;
+import com.hmdm.launcher.service.MqttPushService;
 import com.hmdm.launcher.util.RemoteLogger;
 import com.hmdm.launcher.util.Utils;
 
@@ -117,7 +117,7 @@ public class GetServerConfigTask extends AsyncTask< Void, Integer, Integer > {
                     settingsHelper.setDeviceId(serverConfig.getNewNumber());
                     serverConfig.setNewNumber(null);
                     try {
-                        PushNotificationMqttWrapper.getInstance().disconnect(context);
+                        MqttPushService.stop(context);
                     } catch (Exception e) {
                     }
                 }
@@ -229,30 +229,13 @@ public class GetServerConfigTask extends AsyncTask< Void, Integer, Integer > {
                 return null;
             }
 
-            // Check response signature
-            String serverSignature = response.headers().get(Const.HEADER_RESPONSE_SIGNATURE);
-            if (serverSignature == null) {
-                errorText = "Missing " + Const.HEADER_RESPONSE_SIGNATURE + " flag, dropping response";
-                Log.e(Const.LOG_TAG, errorText);
-                buildTaskErrorTextSecure(response, serverResponse);
-                return null;
-            }
-
-            // We need to extract data from the response body
-            // Here we assume the specific form of response body: {"status":"OK","message":null,"data":{...}}
-            final String dataMarker = "\"data\":";
-            int pos = serverResponse.indexOf(dataMarker);
-            if (pos == -1) {
-                errorText = "Wrong server response, missing data";
-                Log.e(Const.LOG_TAG, errorText + ": " + serverResponse);
-                buildTaskErrorTextSecure(response, serverResponse);
-                return null;
-            }
-            String serverData = serverResponse.substring(pos + dataMarker.length(), serverResponse.length() - 1);
-            String calculatedSignature = CryptoHelper.getSHA1String(BuildConfig.REQUEST_SIGNATURE + serverData.replaceAll("\\s", ""));
-            if (!calculatedSignature.equalsIgnoreCase(serverSignature)) {
-                errorText = "Server signature " + serverSignature + " doesn't match calculated signature " + calculatedSignature + ", dropping response";
-                Log.e(Const.LOG_TAG, errorText);
+            String serverData;
+            try {
+                serverData = CryptoHelper.getVerifiedServerData(serverResponse,
+                        response.headers().get(Const.HEADER_RESPONSE_SIGNATURE), BuildConfig.REQUEST_SIGNATURE);
+            } catch (IllegalArgumentException e) {
+                errorText = e.getMessage();
+                RemoteLogger.log(context, Const.LOG_WARN, "Configuration response verification failed: " + errorText);
                 buildTaskErrorTextSecure(response, serverResponse);
                 return null;
             }

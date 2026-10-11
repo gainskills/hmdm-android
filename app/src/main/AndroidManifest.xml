@@ -64,7 +64,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_PASSWORD_COMPLEXITY" />
     <uses-permission android:name="android.permission.MASTER_CLEAR"
         tools:ignore="ProtectedPermissions"/>
@@ -253,7 +252,10 @@
         <service android:name=".pro.service.CheckForegroundAppAccessibilityService"
                  android:exported="false"/>
 
-        <service android:name="org.eclipse.paho.android.service.MqttService"
+        <!-- Utils selects systemExempted only for Device Owner, a runtime exemption
+             not recognized by lint; exact-alarm permission is not needed. -->
+        <service android:name="com.hmdm.launcher.service.MqttPushService"
+            tools:ignore="ForegroundServicePermission"
             android:foregroundServiceType="specialUse|systemExempted"
             android:exported="false">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
@@ -267,7 +269,9 @@
         <service android:name=".service.StatusControlService"
             android:exported="false"/>
 
+        <!-- Same Device Owner type selection as MqttPushService. -->
         <service android:name=".service.PushLongPollingService"
+            tools:ignore="ForegroundServicePermission"
             android:foregroundServiceType="specialUse|systemExempted"
             android:exported="false">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

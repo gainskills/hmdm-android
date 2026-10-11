@@ -38,11 +38,10 @@ import com.hmdm.launcher.json.PushResponse;
 import com.hmdm.launcher.json.ServerConfig;
 import com.hmdm.launcher.server.ServerService;
 import com.hmdm.launcher.server.ServerServiceKeeper;
-import com.hmdm.launcher.util.PushNotificationMqttWrapper;
+import com.hmdm.launcher.service.MqttPushService;
 import com.hmdm.launcher.util.RemoteLogger;
 
 import java.io.UnsupportedEncodingException;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.util.HashMap;
 import java.util.Map;
@@ -89,8 +88,8 @@ public class PushNotificationWorker extends Worker {
 
         String pushOptions = settingsHelper.getConfig().getPushOptions();
 
-        if (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER) ||
-                pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM)) {
+        if (ServerConfig.PUSH_OPTIONS_MQTT_WORKER.equals(pushOptions) ||
+                ServerConfig.PUSH_OPTIONS_MQTT_ALARM.equals(pushOptions)) {
             // Note: MQTT client is automatically reconnected if connection is broken during launcher running,
             // and re-initializing it may cause looped errors
             // In particular, MQTT client is reconnected after turning Wi-Fi off and back on.
@@ -173,10 +172,7 @@ public class PushNotificationWorker extends Worker {
     // Periodic configuration update requests
     private Result doMqttWork() {
 
-        if (PushNotificationMqttWrapper.getInstance().checkPingDeath(context)) {
-            RemoteLogger.log(context, Const.LOG_INFO, "MQTT ping death detected, reconnecting!");
-            mqttReconnect();
-        }
+        MqttPushService.healthCheck();
 
         return forceConfigUpdateWork();
     }
@@ -197,24 +193,4 @@ public class PushNotificationWorker extends Worker {
         return Result.success();
     }
 
-    // We assume we're running in the background!
-    // https://stackoverflow.com/questions/57552955/is-possible-backgroundworker-dowork-in-main-thread
-    private void mqttReconnect() {
-        int keepaliveTime = Const.DEFAULT_PUSH_ALARM_KEEPALIVE_TIME_SEC;
-        String pushOptions = settingsHelper.getConfig().getPushOptions();
-        Integer newKeepaliveTime = settingsHelper.getConfig().getKeepaliveTime();
-        if (newKeepaliveTime != null && newKeepaliveTime >= 30) {
-            keepaliveTime = newKeepaliveTime;
-        }
-        try {
-            PushNotificationMqttWrapper.getInstance().disconnect(context);
-            Thread.sleep(5000);
-            URL url = new URL(settingsHelper.getBaseUrl());
-            PushNotificationMqttWrapper.getInstance().connect(context, url.getHost(), BuildConfig.MQTT_PORT,
-                    pushOptions, keepaliveTime, settingsHelper.getDeviceId(), null, null);
-        } catch (Exception e) {
-            RemoteLogger.log(context, Const.LOG_DEBUG, "Reconnection failure: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
 }

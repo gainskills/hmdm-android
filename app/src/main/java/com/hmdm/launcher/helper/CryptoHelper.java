@@ -60,4 +60,22 @@ public class CryptoHelper {
         } catch ( Exception e ) { throw new RuntimeException( e ); }
     }
 
+    /** Verify the existing server response format before accepting its configuration data. */
+    public static String getVerifiedServerData(String response, String signature, String secret) {
+        if (signature == null) {
+            throw new IllegalArgumentException("Missing response signature, dropping response");
+        }
+        final String dataMarker = "\"data\":";
+        int pos = response.indexOf(dataMarker);
+        if (pos == -1) {
+            throw new IllegalArgumentException("Wrong server response, missing data");
+        }
+        String data = response.substring(pos + dataMarker.length(), response.length() - 1);
+        String calculated = getSHA1String(secret + data.replaceAll("\\s", ""));
+        if (!calculated.equalsIgnoreCase(signature)) {
+            throw new IllegalArgumentException("Server response signature mismatch, dropping response");
+        }
+        return data;
+    }
+
 }

@@ -34,9 +34,8 @@ import com.hmdm.launcher.worker.PushNotificationWorker;
 import com.hmdm.launcher.worker.ScheduledAppUpdateWorker;
 import com.hmdm.launcher.worker.SendDeviceInfoWorker;
 
-import org.eclipse.paho.android.service.MqttAndroidClient;
+import com.hmdm.launcher.service.MqttPushService;
 
-import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -79,52 +78,11 @@ public class Initializer {
     }
 
     public static void startServicesAndLoadConfig(Context context) {
-        // Start Push service
-        String pushOptions = null;
-        int keepaliveTime = Const.DEFAULT_PUSH_ALARM_KEEPALIVE_TIME_SEC;
         SettingsHelper settingsHelper = SettingsHelper.getInstance(context);
-        if (settingsHelper != null && settingsHelper.getConfig() != null) {
-            pushOptions = settingsHelper.getConfig().getPushOptions();
-            Integer newKeepaliveTime = settingsHelper.getConfig().getKeepaliveTime();
-            if (newKeepaliveTime != null && newKeepaliveTime >= 30) {
-                keepaliveTime = newKeepaliveTime;
-            }
-        }
-        if (BuildConfig.MQTT_SERVICE_FOREGROUND && pushOptions != null) {
-            if (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
-                    || pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM)) {
-                try {
-                    URL url = new URL(settingsHelper.getBaseUrl());
-                    // Broadcast receivers are not allowed to bind to services
-                    // Therefore we start a service, and it binds to itself using
-                    // PushNotificationMqttWrapper.getInstance().connect()
-                    Intent serviceStartIntent = new Intent();
-                    serviceStartIntent.setClassName(context, MqttAndroidClient.SERVICE_NAME);
-                    serviceStartIntent.putExtra(MqttAndroidClient.EXTRA_START_AT_BOOT, true);
-                    serviceStartIntent.putExtra(MqttAndroidClient.EXTRA_DOMAIN, url.getHost());
-                    serviceStartIntent.putExtra(MqttAndroidClient.EXTRA_KEEPALIVE_TIME, keepaliveTime);
-                    serviceStartIntent.putExtra(MqttAndroidClient.EXTRA_PUSH_OPTIONS, pushOptions);
-                    serviceStartIntent.putExtra(MqttAndroidClient.EXTRA_DEVICE_ID, settingsHelper.getDeviceId());
-                    Object service = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ?
-                            context.startForegroundService(serviceStartIntent) :
-                            context.startService(serviceStartIntent);
-                    Log.i(Const.LOG_TAG, "Starting Push service from BootReceiver");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            } else if (pushOptions.equals(ServerConfig.PUSH_OPTIONS_POLLING)) {
-                try {
-                    Intent serviceStartIntent = new Intent(context, PushLongPollingService.class);
-                    serviceStartIntent.putExtra(Const.EXTRA_ENABLED, true);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(serviceStartIntent);
-                    } else {
-                        context.startService(serviceStartIntent);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
+        MqttPushService.resume(context);
+        if (settingsHelper.getConfig() != null && ServerConfig.PUSH_OPTIONS_POLLING.equals(settingsHelper.getConfig().getPushOptions())) {
+            try { context.startForegroundService(new Intent(context, PushLongPollingService.class)); }
+            catch (RuntimeException e) { Log.w(Const.LOG_TAG, "HTTP push service start deferred", e); }
         }
 
         // Start required services here instead of MainActivity (because it's not running)
