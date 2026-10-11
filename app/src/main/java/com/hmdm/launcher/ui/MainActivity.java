@@ -32,6 +32,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -48,7 +49,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
@@ -125,7 +128,11 @@ import com.squareup.picasso.Picasso;
 import org.apache.commons.io.FileUtils;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.List;
 
@@ -190,6 +197,9 @@ public class MainActivity
     private static boolean configInitialized = false;
     // This flag is used to exit kiosk to avoid looping in onResume()
     private static boolean interruptResumeFlow = false;
+    // Set when the kiosk unlock button brings the launcher to the front: the password dialog
+    // is shown by the instance which actually comes up (see onResume() and showContent())
+    private static boolean kioskUnlockRequested = false;
     private static final int BOOT_DURATION_SEC = 120;
     private static final int PAUSE_BETWEEN_AUTORUNS_SEC = 5;
     private boolean sendDeviceInfoScheduled = false;
@@ -214,9 +224,13 @@ public class MainActivity
 
     private int lastNetworkType;
 
-    private ConfigUpdater configUpdater = new ConfigUpdater();
+    private ConfigUpdater configUpdater = null;
 
     private Picasso picasso = null;
+
+    // Avoid race condition when an activity is re-created when kiosk mode is unlocked
+    // Is used together with PREF_KEY_ACTIVITY_RUNNING preference
+    private static MainActivity currentActivity;
 
     private BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
@@ -325,6 +339,9 @@ public class MainActivity
         }
     };
 
+    private LauncherApps appChangeService;
+    private LauncherApps.Callback appChangeCallback = null;
+
     private GradientDrawable selectedManageButtonBorder = new GradientDrawable();
     private ImageView exitView;
     private long exitFirstTapTime = 0;
@@ -348,8 +365,15 @@ public class MainActivity
             firstStartAfterProvisioning = true;
         }
 
+        // The activity may be recreated while it is brought to the front from the kiosk app
+        // (a configuration change, e.g. the orientation, relaunches it). The interrupt flag is meant
+        // for an instance which is already running: a new one must go through its start-up,
+        // otherwise it stays on the loading screen forever
+        interruptResumeFlow = false;
+
         if (CrashLoopProtection.isCrashLoopDetected(this)) {
             Toast.makeText(MainActivity.this, R.string.fault_loop_detected, Toast.LENGTH_LONG).show();
+            openLauncherChoiceDialog();
             return;
         }
 
@@ -360,6 +384,11 @@ public class MainActivity
             public void uncaughtException(Thread t, Throwable e) {
                 e.printStackTrace();
 
+                try {
+                    logCrash(e);
+                } catch (Exception e1) {
+                    e1.printStackTrace();
+                }
                 ProUtils.sendExceptionToCrashlytics(e);
 
                 CrashLoopProtection.registerFault(MainActivity.this);
@@ -393,11 +422,21 @@ public class MainActivity
         settingsHelper = SettingsHelper.getInstance(this);
         preferences = getSharedPreferences(Const.PREFERENCES, MODE_PRIVATE);
 
+        configUpdater = new ConfigUpdater(this);
+
         if ("".equals(settingsHelper.getDeviceId()) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            if (Utils.isDeviceOwner(this)) {
+                Utils.autoGrantStoragePermission(this);
+            }
             AdminReceiver.updateSettingsFromFile(this);
         }
 
         settingsHelper.setAppStartTime(System.currentTimeMillis());
+
+        // settingsHelper.getImei() is "" by default, it is non-null
+        if (Utils.isDeviceOwner(this) && "".equals(settingsHelper.getImei())) {
+            settingsHelper.setImei(DeviceInfoProvider.getImei(this, 0));
+        }
 
         Initializer.init(this, () -> {
 
@@ -428,8 +467,65 @@ public class MainActivity
                 startAppsAtBoot();
             }
 
+            currentActivity = this;
             settingsHelper.setMainActivityRunning(true);
         });
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            appChangeCallback = new LauncherApps.Callback() {
+                private void updateShortcuts() {
+                    if (mainAppListAdapter != null) {
+                        mainAppListAdapter.updateShortcuts(MainActivity.this);
+                        mainAppListAdapter.notifyDataSetChanged();
+                    }
+                    if (bottomAppListAdapter != null) {
+                        bottomAppListAdapter.updateShortcuts(MainActivity.this);
+                        bottomAppListAdapter.notifyDataSetChanged();
+                    }
+                }
+
+                @Override
+                public void onPackageRemoved(String s, UserHandle userHandle) {
+                    updateShortcuts();
+                }
+
+                @Override
+                public void onPackageAdded(String s, UserHandle userHandle) {
+                    updateShortcuts();
+                }
+
+                @Override
+                public void onPackageChanged(String s, UserHandle userHandle) {
+                    updateShortcuts();
+                }
+
+                @Override
+                public void onPackagesAvailable(String[] strings, UserHandle userHandle, boolean b) {
+                }
+
+                @Override
+                public void onPackagesUnavailable(String[] strings, UserHandle userHandle, boolean b) {
+                }
+            };
+            appChangeService = (LauncherApps) getSystemService(Context.LAUNCHER_APPS_SERVICE);
+            if (appChangeService != null) {
+                appChangeService.registerCallback(appChangeCallback);
+            }
+        }
+    }
+
+    private void logCrash(Throwable e) throws FileNotFoundException {
+        File file = new File("/storage/emulated/0/Download/hmdm_stack_trace.txt");
+        if (file.exists()) {
+            file.delete();
+        }
+        FileOutputStream fos = new FileOutputStream(file, false);
+        PrintWriter writer = new PrintWriter(new OutputStreamWriter(fos));
+
+        e.printStackTrace(writer);
+
+        writer.flush();
+        writer.close();
     }
 
     // On some Android firmwares, onResume is called before onCreate, so the fields are not initialized
@@ -484,18 +580,31 @@ public class MainActivity
 
         if (interruptResumeFlow) {
             interruptResumeFlow = false;
+            if (kioskUnlockRequested) {
+                kioskUnlockRequested = false;
+                createAndShowEnterPasswordDialog();
+            }
             return;
         }
 
         if (!BuildConfig.SYSTEM_PRIVILEGES) {
             if (firstStartAfterProvisioning) {
                 firstStartAfterProvisioning = false;
-                waitForProvisioning(10);
+                waitForProvisioning(10, () -> setDefaultLauncherEarly());
             } else {
                 setDefaultLauncherEarly();
             }
         } else {
             setSelfAsDeviceOwner();
+        }
+
+        if (mainAppListAdapter != null) {
+            mainAppListAdapter.updateShortcuts(this);
+            mainAppListAdapter.notifyDataSetChanged();
+        }
+        if (bottomAppListAdapter != null) {
+            bottomAppListAdapter.updateShortcuts(this);
+            bottomAppListAdapter.notifyDataSetChanged();
         }
     }
 
@@ -618,9 +727,44 @@ public class MainActivity
 
             @Override
             protected void onPostExecute(Void v) {
-                setDefaultLauncherEarly();
+                if (BuildConfig.REBOOT_ON_DEVICE_OWNER_FAIL && !settingsHelper.isRebootedAfterEnrollment()) {
+                    // Attempt to reboot only once - avoid looping
+                    settingsHelper.setRebootedAfterEnrollment(true);
+                    checkIfDeviceOwnerSet();
+                } else {
+                    setDefaultLauncherEarly();
+                }
             }
         }.execute();
+    }
+
+    private void checkIfDeviceOwnerSet() {
+        waitForProvisioning(5, () -> {
+            if (!Utils.isDeviceOwner(this)) {
+                promptReboot();
+            } else {
+                setDefaultLauncherEarly();
+            }
+        });
+    }
+
+    private void promptReboot() {
+        new AlertDialog.Builder(MainActivity.this)
+                .setMessage(getString(R.string.reboot_required))
+                .setCancelable(false)
+                .setPositiveButton(R.string.reboot, (dialog, which) ->
+                        reboot())
+                .create()
+                .show();
+        handler.postDelayed(() -> reboot(), 10);
+    }
+
+    private void reboot() {
+        // This only works with system permissions
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        pm.reboot(null);
+        // Fallback
+        setDefaultLauncherEarly();
     }
 
     private void startServices() {
@@ -701,14 +845,14 @@ public class MainActivity
     // AdminReceiver may be called later than onCreate() and onResume()
     // so the launcher setup and other methods requiring device owner permissions may fail
     // Here we wait up to 10 seconds until the app gets the device owner permissions
-    private void waitForProvisioning(int attempts) {
+    private void waitForProvisioning(int attempts, Runnable onComplete) {
         if (Utils.isDeviceOwner(this) || attempts <= 0) {
-            setDefaultLauncherEarly();
+            onComplete.run();
         } else {
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    waitForProvisioning(attempts - 1);
+                    waitForProvisioning(attempts - 1, onComplete);
                 }
             }, 1000);
         }
@@ -979,11 +1123,13 @@ public class MainActivity
                         kioskUnlockCounter++;
                         if (kioskUnlockCounter >= Const.KIOSK_UNLOCK_CLICK_COUNT) {
                             // We are in the main app: let's open launcher activity
+                            // The password dialog is shown by the instance which comes to the front:
+                            // this one in onResume(), or a recreated one once its content is shown
+                            kioskUnlockRequested = true;
                             interruptResumeFlow = true;
                             Intent restoreLauncherIntent = new Intent(MainActivity.this, MainActivity.class);
                             restoreLauncherIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                             startActivity(restoreLauncherIntent);
-                            createAndShowEnterPasswordDialog();
                             kioskUnlockCounter = 0;
                         }
                     }
@@ -1690,7 +1836,14 @@ public class MainActivity
 
         if (ProUtils.kioskModeRequired(this)) {
             String kioskApp = settingsHelper.getConfig().getMainApp();
-            if (kioskApp != null && kioskApp.trim().length() > 0 &&
+            if (kioskUnlockRequested) {
+                // Brought to the front by the kiosk unlock button and recreated on the way:
+                // the kiosk app stays behind until the password is checked, and the desktop
+                // is not drawn under the dialog, so nothing is shown to an unauthorized user
+                kioskUnlockRequested = false;
+                createAndShowEnterPasswordDialog();
+                return;
+            } else if (kioskApp != null && kioskApp.trim().length() > 0 &&
                     // If Headwind MDM itself is set as kiosk app, the kiosk mode is already turned on;
                     // So here we just proceed to drawing the content
                     (!kioskApp.equals(getPackageName()) || !ProUtils.isKioskModeRunning(this))) {
@@ -1985,7 +2138,10 @@ public class MainActivity
     protected void onDestroy() {
         super.onDestroy();
 
-        settingsHelper.setMainActivityRunning(false);
+        if (currentActivity == this) {
+            currentActivity = null;
+            settingsHelper.setMainActivityRunning(false);
+        }
 
         WindowManager manager = ((WindowManager)getApplicationContext().getSystemService(Context.WINDOW_SERVICE));
         if ( applicationNotAllowed != null ) {
@@ -2024,6 +2180,11 @@ public class MainActivity
             unregisterReceiver(screenOffReceiver);
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP &&
+                appChangeService != null && appChangeCallback != null) {
+            appChangeService.unregisterCallback(appChangeCallback);
         }
     }
 

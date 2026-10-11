@@ -4,7 +4,10 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.provider.DocumentsContract;
@@ -13,6 +16,7 @@ import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -41,7 +45,7 @@ import java.util.Map;
 import okhttp3.Cache;
 import okhttp3.OkHttpClient;
 
-public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.ViewHolder> {
+public abstract class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.ViewHolder> {
     protected LayoutInflater layoutInflater;
     protected List<AppInfo> items;
     protected Map<Integer, AppInfo> shortcuts;        // Keycode -> Application, filled in getInstalledApps()
@@ -57,6 +61,7 @@ public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.
     protected boolean dpadUsed = false;
 
     protected Picasso picasso = null;
+    protected Map<String, ImageView> customIconViewMap = new HashMap<>();
 
     public BaseAppListAdapter(Activity parentActivity, MainAppListAdapter.OnAppChooseListener appChooseListener, MainAppListAdapter.SwitchAdapterListener switchAdapterListener) {
         layoutInflater = LayoutInflater.from(parentActivity);
@@ -87,6 +92,8 @@ public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.
             }
         }
     }
+
+    public abstract void updateShortcuts(Activity parentActivity);
 
     @Override
     public ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
@@ -148,20 +155,24 @@ public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.
                         public void onImageLoadFailed(Picasso picasso, Uri uri, Exception exception) {
                             // On fault, get the image from the cache
                             // This is a workaround against a bug in Picasso: it doesn't display cached images by default!
-                            picasso.load(appInfo.iconUrl)
-                                    .networkPolicy(NetworkPolicy.OFFLINE)
-                                    .into(holder.binding.imageView);
+                            ImageView viewForUri = customIconViewMap.get(uri.toString());
+                            if (viewForUri != null) {
+                                picasso.load(uri)
+                                        .networkPolicy(NetworkPolicy.OFFLINE)
+                                        .into(viewForUri);
+                            }
                         }
                     });
                     picasso = builder.build();
                 }
 
+                customIconViewMap.put(appInfo.iconUrl, holder.binding.imageView);
                 picasso.load(appInfo.iconUrl)
                         .into(holder.binding.imageView);
             } else {
                 switch (appInfo.type) {
                     case AppInfo.TYPE_APP:
-                        holder.binding.imageView.setImageDrawable(parentActivity.getPackageManager().getApplicationIcon(appInfo.packageName));
+                        holder.binding.imageView.setImageDrawable(getIconForApp(appInfo));
                         break;
                     case AppInfo.TYPE_WEB:
                         holder.binding.imageView.setImageDrawable(
@@ -272,8 +283,7 @@ public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.
     protected void chooseApp(AppInfo appInfo) {
         switch (appInfo.type) {
             case AppInfo.TYPE_APP:
-                Intent launchIntent = parentActivity.getPackageManager().getLaunchIntentForPackage(
-                        appInfo.packageName);
+                Intent launchIntent = getLaunchIntentForApp(appInfo);
                 if (launchIntent != null) {
                     // These magic flags are found in the source code of the default Android launcher
                     // These flags preserve the app activity stack (otherwise a launch activity appears at the top which is not correct)
@@ -344,6 +354,44 @@ public class BaseAppListAdapter extends RecyclerView.Adapter<BaseAppListAdapter.
         }
         if (appChooseListener != null) {
             appChooseListener.onAppChoose(appInfo);
+        }
+    }
+
+    private ResolveInfo getResolveInfoMultiIcon(AppInfo appInfo) {
+        PackageManager pm = parentActivity.getPackageManager();
+        Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.addCategory(Intent.CATEGORY_LAUNCHER);
+        intent.setPackage(appInfo.packageName);
+        List<ResolveInfo> shortcuts = pm.queryIntentActivities(intent, 0);
+        return shortcuts.get(appInfo.iconIndex);
+    }
+
+    private Intent getLaunchIntentForApp(AppInfo appInfo) {
+        PackageManager pm = parentActivity.getPackageManager();
+        if (!appInfo.multiIcon) {
+            return pm.getLaunchIntentForPackage(appInfo.packageName);
+        } else {
+            ResolveInfo ri = getResolveInfoMultiIcon(appInfo);
+            String packageName = ri.activityInfo.packageName;
+            String className = ri.activityInfo.name;
+            Intent intent = new Intent();
+            intent.setComponent(new ComponentName(packageName, className));
+            return intent;
+        }
+    }
+
+    private Drawable getIconForApp(AppInfo appInfo) {
+        PackageManager pm = parentActivity.getPackageManager();
+        if (!appInfo.multiIcon) {
+            try {
+                return pm.getApplicationIcon(appInfo.packageName);
+            } catch (PackageManager.NameNotFoundException e) {
+                e.printStackTrace();
+                return null;
+            }
+        } else {
+            ResolveInfo ri = getResolveInfoMultiIcon(appInfo);
+            return ri.loadIcon(pm);
         }
     }
 

@@ -2,6 +2,7 @@ package com.hmdm.launcher.helper;
 
 import static android.content.Context.MODE_PRIVATE;
 
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.content.Intent;
@@ -68,9 +69,7 @@ public class Initializer {
 
             ConnectionWaiter.waitForConnect(context, () -> {
                 DetailedInfoWorker.schedule(context);
-                if (BuildConfig.ENABLE_PUSH) {
-                    PushNotificationWorker.schedule(context);
-                }
+                PushNotificationWorker.schedule(context);
                 ScheduledAppUpdateWorker.schedule(context);
 
                 // Run completion in the UI thread
@@ -91,7 +90,7 @@ public class Initializer {
                 keepaliveTime = newKeepaliveTime;
             }
         }
-        if (BuildConfig.MQTT_SERVICE_FOREGROUND && BuildConfig.ENABLE_PUSH && pushOptions != null) {
+        if (BuildConfig.MQTT_SERVICE_FOREGROUND && pushOptions != null) {
             if (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
                     || pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM)) {
                 try {
@@ -241,6 +240,7 @@ public class Initializer {
     }
 
     // Used by InitialSetupActivity
+    @SuppressLint("MissingPermission")
     public static void applyEarlyNonInteractivePolicies(Context context, ServerConfig config) {
         if (config.getSystemUpdateType() != null &&
                 config.getSystemUpdateType() != ServerConfig.SYSTEM_UPDATE_DEFAULT &&

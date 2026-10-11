@@ -167,7 +167,7 @@ public class AdminActivity extends BaseActivity {
             if (settingsHelper != null && settingsHelper.getConfig() != null) {
                 pushOptions = settingsHelper.getConfig().getPushOptions();
             }
-            if (BuildConfig.ENABLE_PUSH && pushOptions != null && (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
+            if (pushOptions != null && (pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_WORKER)
                     || pushOptions.equals(ServerConfig.PUSH_OPTIONS_MQTT_ALARM))) {
                 PushNotificationMqttWrapper.getInstance().disconnect(this);
             }

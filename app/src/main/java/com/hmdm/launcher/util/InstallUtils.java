@@ -70,6 +70,10 @@ public class InstallUtils {
                                                           Map<String, File> pendingInstallations) {
         PackageManager packageManager = context.getPackageManager();
 
+        // If an installation is completed but the completion handler wasn't called, the package
+        // remains in pendingInstallations forever and won't be updated until the device reboot
+        dropCompletedInstallations(context, pendingInstallations);
+
         // First handle apps to be removed, then apps to be installed
         // We process only applications of type "app" (default) and skip web links and others
         for (Application a : applications) {
@@ -151,6 +155,37 @@ public class InstallUtils {
                     it.remove();
                     continue;
                 }
+            }
+        }
+    }
+
+    // An installation is pending only while the package installer still holds a session for it;
+    // a completion the receiver missed must not keep the package out of every later update
+    private static void dropCompletedInstallations(Context context, Map<String, File> pendingInstallations) {
+        if (pendingInstallations.isEmpty()) {
+            return;
+        }
+        List<PackageInstaller.SessionInfo> sessions;
+        try {
+            sessions = context.getPackageManager().getPackageInstaller().getMySessions();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return;
+        }
+        Iterator<Map.Entry<String, File>> it = pendingInstallations.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, File> pending = it.next();
+            boolean inFlight = false;
+            for (PackageInstaller.SessionInfo session : sessions) {
+                if (pending.getKey().equals(session.getAppPackageName())) {
+                    inFlight = true;
+                    break;
+                }
+            }
+            if (!inFlight) {
+                Log.d(Const.LOG_TAG, "checkAndUpdateApplications(): no installer session for " + pending.getKey() + ", dropping pending installation");
+                deleteTempApk(pending.getValue());
+                it.remove();
             }
         }
     }
@@ -534,7 +569,7 @@ public class InstallUtils {
     }
 
     // always verify the host - dont check for certificate
-    final static HostnameVerifier DO_NOT_VERIFY = new HostnameVerifier() {
+    public final static HostnameVerifier DO_NOT_VERIFY = new HostnameVerifier() {
         public boolean verify(String hostname, SSLSession session) {
             return true;
         }
